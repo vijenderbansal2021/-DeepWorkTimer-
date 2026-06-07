@@ -40,7 +40,7 @@
     /* ── AMBIENT GRAIN ───────────────────────────────── */
     body::before {
       content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves=[...]
       background-size: 180px;
       opacity: 0.5;
     }
@@ -319,7 +319,7 @@
   </div>
 </div>
 <!-- TEST AUDIO BUTTON -->
- <button style="position:fixed;bottom:20px;right:20px;padding:10px 15px;background:rgba(212,168,83,0.2);border:1px solid var(--accent);color:var(--accent);border-radius:8px;font-size:11px;cursor:pointer;z-index:100;" onclick="playChime('focus')">🔊 Test Audio</button>
+ <button style="position:fixed;bottom:20px;right:20px;padding:10px 15px;background:rgba(212,168,83,0.2);border:1px solid var(--accent);color:var(--accent);border-radius:8px;font-size:11px;cursor:[...]
 <!-- ══════════════════════════════════════════
      FOCUS SCREEN
 ══════════════════════════════════════════ -->
@@ -561,35 +561,86 @@ function playChime(type = 'focus') {
   } catch(e) { console.warn('Audio error:', e); }
 }
 
+// ── SEA WAVE AMBIENCE ────────────────────────────────────────────
 function startAmbience() {
   stopAmbience();
   try {
     const ctx = getCtx();
     ambienceNodes = [];
-    // Layered soft drones
-    const freqs = [110, 165, 220, 330];
-    freqs.forEach((f, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass'; filter.frequency.value = 400;
-      osc.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-      osc.type = i % 2 === 0 ? 'sine' : 'triangle';
-      osc.frequency.value = f;
-      gain.gain.setValueAtTime(0, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.04 - i * 0.007, ctx.currentTime + 2);
-      osc.start();
-      ambienceNodes.push({ osc, gain });
+
+    // Wave-like modulation using multiple low-frequency sine waves
+    const waveFreqs = [0.35, 0.48, 0.62];  // Three different wave speeds
+    
+    waveFreqs.forEach((waveFreq, waveIdx) => {
+      // Create brownian-like noise layer (ocean rumble)
+      const bufLen = ctx.sampleRate * 4;  // 4 seconds of noise
+      const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      
+      // Generate brownian noise (smoother than white noise)
+      let lastValue = 0;
+      for (let i = 0; i < bufLen; i++) {
+        const white = Math.random() * 2 - 1;
+        lastValue = (lastValue + white * 0.02) * 0.98;
+        data[i] = lastValue * 0.4;
+      }
+      
+      // Play the noise
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      noise.loop = true;
+      
+      // Low-pass filter for ocean-like quality
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass';
+      lpf.frequency.setValueAtTime(1200, ctx.currentTime);
+      lpf.Q.setValueAtTime(0.5, ctx.currentTime);
+      
+      // Modulate volume with LFO to create wave breathing
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = waveFreq;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 0.035;
+      
+      const volume = ctx.createGain();
+      volume.gain.setValueAtTime(0.05 - waveIdx * 0.008, ctx.currentTime);
+      
+      // Connect signal chain: noise → filter → volume (modulated by LFO) → destination
+      noise.connect(lpf);
+      lpf.connect(volume);
+      lfo.connect(lfoGain);
+      lfoGain.connect(volume.gain);
+      volume.connect(ctx.destination);
+      
+      noise.start(ctx.currentTime);
+      lfo.start(ctx.currentTime);
+      
+      ambienceNodes.push({ osc: lfo, source: noise, gain: volume, lpf });
     });
-    // Slow LFO tremolo
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    lfo.frequency.value = 0.08;
-    lfoGain.gain.value = 0.015;
-    lfo.connect(lfoGain);
-    ambienceNodes.forEach(n => lfoGain.connect(n.gain.gain));
-    lfo.start();
-    ambienceNodes.push({ osc: lfo, gain: lfoGain });
+
+    // Add subtle high-frequency shimmer (sea spray)
+    const shimmerOsc = ctx.createOscillator();
+    const shimmerGain = ctx.createGain();
+    shimmerOsc.type = 'sine';
+    shimmerOsc.frequency.setValueAtTime(4800, ctx.currentTime);
+    shimmerGain.gain.setValueAtTime(0.008, ctx.currentTime);
+    
+    // Gentle breathing modulation
+    const shimmerLfo = ctx.createOscillator();
+    shimmerLfo.frequency.value = 0.25;
+    const shimmerLfoGain = ctx.createGain();
+    shimmerLfoGain.gain.value = 0.006;
+    
+    shimmerOsc.connect(shimmerGain);
+    shimmerLfo.connect(shimmerLfoGain);
+    shimmerLfoGain.connect(shimmerGain.gain);
+    shimmerGain.connect(ctx.destination);
+    
+    shimmerOsc.start(ctx.currentTime);
+    shimmerLfo.start(ctx.currentTime);
+    
+    ambienceNodes.push({ osc: shimmerOsc, gain: shimmerGain, lfo: shimmerLfo });
+    
   } catch(e) { console.warn('Ambience error:', e); }
 }
 
@@ -597,8 +648,12 @@ function stopAmbience() {
   if (!ambienceNodes) return;
   try {
     const ctx = getCtx();
-    ambienceNodes.forEach(({ osc, gain }) => {
-      try { gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 1); osc.stop(ctx.currentTime + 1.1); } catch {}
+    ambienceNodes.forEach(node => {
+      try {
+        if (node.gain) node.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 1);
+        if (node.osc) node.osc.stop(ctx.currentTime + 1.1);
+        if (node.source) node.source.stop(ctx.currentTime + 1.1);
+      } catch {}
     });
   } catch {}
   ambienceNodes = null;
